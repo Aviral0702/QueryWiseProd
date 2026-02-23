@@ -1,0 +1,36 @@
+# QueryWise Agent Configuration
+
+# Database Connection
+database:
+  host: localhost
+  port: 5433
+  user: querywise
+  password: querywise
+  dbname: querywise
+  sslmode: disable
+
+backend:
+  url: http://localhost:3000
+  api_key: 8d1761a09e2a1f64e7ffddfa5a6e5ac53121e60ff6d14011
+
+# Metrics Collection
+collection:
+  interval_seconds: 60
+  batch_size: 100
+  timeout_seconds: 30
+
+# Agent Identification
+agent:
+  name: production-db-1
+  environment: production
+  version: 0.1.0
+
+# Logging
+logging:
+  level: info
+  format: json
+
+# Performance Tuning
+performance:
+  workers: 2
+  buffer_size: 1000

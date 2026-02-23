@@ -1,0 +1,54 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: querywise
+      POSTGRES_PASSWORD: querywise
+      POSTGRES_DB: querywise
+    command: postgres -c shared_preload_libraries=pg_stat_statements
+    ports:
+      - "5433:5432"
+    volumes:
+      - querywise_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U querywise"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build: ./backend
+    ports:
+      - "3000:3000"
+    environment:
+      PORT: 3000
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_USER: querywise
+      DB_PASSWORD: querywise
+      DB_NAME: querywise
+      API_SECRET: change-me-in-production
+      # CORS: must match the URL you use to open the frontend (browser Origin)
+      FRONTEND_URL: http://localhost:3001
+      # Disable Google auth for testing (set to "false")
+      ENABLE_GOOGLE_AUTH: "false"
+      # Set for Google SSO: GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET
+    depends_on:
+      db: { condition: service_healthy }
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["node scripts/migrate.js && node src/index.js"]
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        NEXT_PUBLIC_API_URL: http://localhost:3000
+        # Set to "false" to bypass login (must match backend ENABLE_GOOGLE_AUTH)
+        NEXT_PUBLIC_REQUIRE_AUTH: "false"
+    ports:
+      - "3001:3000"
+    depends_on:
+      - backend
+
+volumes:
+  querywise_pgdata:

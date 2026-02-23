@@ -1,0 +1,59 @@
+# Go
+agent/querywise-agent
+agent/querywise-agent.exe
+agent/dist/
+agent/*.so
+agent/*.dylib
+agent/vendor/
+
+# Node.js
+backend/node_modules/
+frontend/node_modules/
+frontend/.next/
+backend/npm-debug.log*
+backend/yarn-debug.log*
+backend/yarn-error.log*
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+config/agent.yml
+config/*.yml
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*.swn
+.DS_Store
+*.sublime-project
+*.sublime-workspace
+
+# Logs
+logs/
+*.log
+
+# Build outputs
+dist/
+build/
+out/
+
+# Test coverage
+coverage/
+.nyc_output/
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# OS
+.DS_Store
+Thumbs.db
