@@ -2,73 +2,70 @@
 
 ## System Overview
 
-QueryWise is a two-tier system designed to securely analyze database costs without exposing sensitive customer data.
+QueryWise collects **anonymized PostgreSQL query statistics** from `pg_stat_statements` (hashed query text, timing, block counters) and stores time-series snapshots in a central backend. A web dashboard lists **per-user database instances** and shows **cost-ranked queries** and simple **response-time trends**.
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                  Customer Infrastructure                     │
 │  ┌────────────────────────────────────────────────────────┐ │
 │  │                   PostgreSQL Database                  │ │
-│  │  - Query Performance Metadata (pg_stat_statements)     │ │
-│  │  - Index Usage Statistics                              │ │
-│  │  - Cache Hit Ratios                                    │ │
+│  │  - pg_stat_statements (read-only)                      │ │
 │  └────────────────────────────────────────────────────────┘ │
 │                          ▲                                   │
-│                          │ Queries                           │
-│                          │ (Read-only)                       │
+│                          │ Read-only queries                 │
 │  ┌────────────────────────────────────────────────────────┐ │
-│  │        QueryWise Agent (Go-based)                      │ │
-│  │  - Collects performance metadata                       │ │
-│  │  - Filters sensitive data                              │ │
-│  │  - Sends anonymized metrics                            │ │
+│  │        QueryWise Agent (Go)                            │ │
+│  │  - Hashes query text (SHA-256)                         │ │
+│  │  - Sends metrics with instance API key                 │ │
 │  └────────────────────────────────────────────────────────┘ │
 └─────────────────────────────────────────────────────────────┘
-                          │
-                          │ Secure HTTPS
-                          │ Anonymized Metrics Only
+                          │ HTTPS (recommended in production)
                           ▼
 ┌─────────────────────────────────────────────────────────────┐
-│              Central Analytics Backend                       │
-│  ┌────────────────────────────────────────────────────────┐ │
-│  │      QueryWise Backend (Node.js)                       │ │
-│  │  - Receives metrics                                    │ │
-│  │  - Analyzes query performance                          │ │
-│  │  - Identifies optimization opportunities              │ │
-│  │  - Generates cost reports                              │ │
-│  └────────────────────────────────────────────────────────┘ │
-│  ┌────────────────────────────────────────────────────────┐ │
-│  │          Dashboard & Visualization                     │ │
-│  │  - Cost breakdowns                                     │ │
-│  │  - Query recommendations                               │ │
-│  │  - Index optimization suggestions                      │ │
-│  └────────────────────────────────────────────────────────┘ │
+│              Central Backend (Node.js)                       │
+│  - Ingest + rate limiting                                    │
+│  - Latest snapshot per query hash for rankings               │
+│  - Optional Google SSO; instances scoped by owner_user_id    │
+└─────────────────────────────────────────────────────────────┘
+                          ▼
+┌─────────────────────────────────────────────────────────────┐
+│              Dashboard (Next.js)                             │
+│  - Instances, API keys, reports                              │
 └─────────────────────────────────────────────────────────────┘
 ```
 
 ## Components
 
 ### Agent (Go)
-- **Location**: Near customer database (on-premise or same VPC)
-- **Responsibility**: Collect metrics, sanitize data, send to backend
-- **Data Collected**: Query execution times, index usage, cache statistics
-- **Security**: No sensitive data leaves customer infrastructure
+
+- **Location:** Near the customer database (on-premise or same VPC).
+- **Responsibility:** Read `pg_stat_statements`, hash query text, POST JSON to `/api/v1/ingest` with `X-API-Key`.
+- **Security:** Raw SQL is not sent to the backend; only hashes and numeric stats.
 
 ### Backend (Node.js)
-- **Responsibility**: Aggregate metrics, analyze patterns, provide insights
-- **Features**: Cost analysis, optimization suggestions, historical tracking
-- **API**: RESTful endpoints for dashboard and programmatic access
 
-## Data Flow
+- **Responsibility:** Store metrics, deduplicate snapshots per query hash (latest row wins for rankings), estimate relative cost, expose REST APIs.
+- **Auth:** Optional JWT after Google OAuth; `db_instances.owner_user_id` ties instances to `users.id`.
 
-1. Agent queries PostgreSQL system views (read-only)
-2. Agent aggregates and anonymizes metrics
-3. Agent sends summary statistics to backend
-4. Backend stores and analyzes data
-5. Dashboard visualizes insights
+### Frontend (Next.js)
 
-## Security Model
+- **Responsibility:** Sign-in (when enabled), create/list instances, open reports.
 
-- **Data Isolation**: Each customer's metrics are isolated
-- **No Raw Data**: Only aggregated statistics are transmitted
-- **Minimal Permissions**: Agent uses read-only database user
-- **Encrypted Transport**: All communication is HTTPS
+## Data flow
+
+1. Agent queries PostgreSQL `pg_stat_statements` (read-only).
+2. Agent sends batches to the backend with the instance API key.
+3. Backend inserts rows tagged with `db_instance_id` and `recorded_at`.
+4. Reports use **the latest snapshot per `query_hash`** for rankings (cumulative stats are not summed across time).
+5. Dashboard calls authenticated APIs to list instances and load reports.
+
+## Security model
+
+- **Tenant isolation:** When Google auth is enabled, instance list/report access is restricted to rows where `owner_user_id` matches the JWT user. Ingest remains keyed only by API secret (`X-API-Key`).
+- **No raw query text** in the central store—only hashes and aggregates.
+- **Transport:** Use HTTPS in production between agent, backend, and browsers.
+
+## Not in scope (today)
+
+- Unused-index analysis, automatic rewrite recommendations, or non-Postgres databases.
+- Row-level encryption at rest (operate like any service on your Postgres deployment).

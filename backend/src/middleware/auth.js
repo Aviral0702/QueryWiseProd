@@ -26,6 +26,10 @@ function requireAuth(req, res, next) {
     return res.status(401).json({ error: 'Authentication required' });
   }
   try {
+    if (JWT_SECRET === 'change-me-in-production' || !JWT_SECRET) {
+      console.error('QueryWise: JWT secret not configured (set JWT_SECRET or API_SECRET).');
+      return res.status(500).json({ error: 'Server authentication is not configured' });
+    }
     const payload = jwt.verify(token, JWT_SECRET);
     req.user = { id: payload.sub, email: payload.email, name: payload.name };
     next();

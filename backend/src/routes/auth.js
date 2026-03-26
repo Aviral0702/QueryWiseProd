@@ -19,6 +19,10 @@ if (!GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET) {
 // GET /api/v1/auth/google — redirect to Google OAuth
 router.get('/google', (req, res) => {
   if (!GOOGLE_CLIENT_ID) {
+    const accept = req.get('Accept') || '';
+    if (accept.includes('text/html')) {
+      return res.redirect(302, `${FRONTEND_URL}/login?error=sso_not_configured`);
+    }
     return res.status(503).json({ error: 'Google SSO is not configured' });
   }
   const state = crypto.randomBytes(16).toString('hex');

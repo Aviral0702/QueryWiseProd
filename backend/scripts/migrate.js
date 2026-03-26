@@ -1,7 +1,6 @@
 require('dotenv').config();
+
 const { Pool } = require('pg');
-const fs = require('fs');
-const path = require('path');
 
 const pool = new Pool({
   host: process.env.DB_HOST || 'localhost',
@@ -12,6 +11,10 @@ const pool = new Pool({
 });
 
 const SQL = `
+-- Required extensions for first-time setups
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
+
 -- Users (Google OAuth SSO)
 CREATE TABLE IF NOT EXISTS users (
   id SERIAL PRIMARY KEY,
@@ -31,6 +34,8 @@ CREATE TABLE IF NOT EXISTS db_instances (
   created_at TIMESTAMP DEFAULT now()
 );
 
+CREATE INDEX IF NOT EXISTS idx_db_instances_name ON db_instances(name);
+
 -- Raw query metrics from ingest
 CREATE TABLE IF NOT EXISTS query_metrics (
   id SERIAL PRIMARY KEY,
@@ -49,10 +54,18 @@ CREATE INDEX IF NOT EXISTS idx_query_metrics_recorded_at ON query_metrics(record
 CREATE INDEX IF NOT EXISTS idx_query_metrics_db_recorded ON query_metrics(db_instance_id, recorded_at DESC);
 `;
 
+const MIGRATIONS = [
+  `ALTER TABLE db_instances ADD COLUMN IF NOT EXISTS owner_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL`,
+  `CREATE INDEX IF NOT EXISTS idx_db_instances_owner_user_id ON db_instances(owner_user_id)`,
+];
+
 async function migrate() {
   const client = await pool.connect();
   try {
     await client.query(SQL);
+    for (const stmt of MIGRATIONS) {
+      await client.query(stmt);
+    }
     console.log('Migrations completed.');
   } catch (err) {
     console.error('Migration failed:', err);

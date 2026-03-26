@@ -1,6 +1,7 @@
 services:
   db:
     image: postgres:16-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_USER: querywise
       POSTGRES_PASSWORD: querywise
@@ -18,6 +19,7 @@ services:
 
   backend:
     build: ./backend
+    restart: unless-stopped
     ports:
       - "3000:3000"
     environment:
@@ -27,28 +29,42 @@ services:
       DB_USER: querywise
       DB_PASSWORD: querywise
       DB_NAME: querywise
-      API_SECRET: change-me-in-production
+      NODE_ENV: production
+      API_SECRET: ${API_SECRET:-change-me-in-production}
       # CORS: must match the URL you use to open the frontend (browser Origin)
       FRONTEND_URL: http://localhost:3001
       # Disable Google auth for testing (set to "false")
-      ENABLE_GOOGLE_AUTH: "false"
+      ENABLE_GOOGLE_AUTH: ${ENABLE_GOOGLE_AUTH:-false}
       # Set for Google SSO: GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET
     depends_on:
       db: { condition: service_healthy }
     entrypoint: ["/bin/sh", "-c"]
     command: ["node scripts/migrate.js && node src/index.js"]
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"require('http').get('http://localhost:3000/api/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1)))\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
 
   frontend:
+    restart: unless-stopped
     build:
       context: ./frontend
       args:
         NEXT_PUBLIC_API_URL: http://localhost:3000
         # Set to "false" to bypass login (must match backend ENABLE_GOOGLE_AUTH)
-        NEXT_PUBLIC_REQUIRE_AUTH: "false"
+        NEXT_PUBLIC_REQUIRE_AUTH: ${NEXT_PUBLIC_REQUIRE_AUTH:-false}
     ports:
       - "3001:3000"
     depends_on:
       - backend
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"require('http').get('http://localhost:3000/',r=>process.exit(r.statusCode<500?0:1)).on('error',()=>process.exit(1)))\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
 
 volumes:
   querywise_pgdata:
