@@ -29,7 +29,9 @@ go build -o querywise-agent ./cmd/main.go
 
 ## Configuration
 
-See `config/agent.example.yml` for configuration options.
+See `config/agent.example.yml` for configuration options (if present in your tree).
+
+Set **`agent.name`** to the same value as the **QueryWise instance name** in the backend (the name you used when creating the instance). That value is sent as `db_id` on ingest so logs and payloads stay aligned with the instance.
 
 ## Running
 
@@ -39,11 +41,7 @@ See `config/agent.example.yml` for configuration options.
 
 ## Database Permissions
 
-The agent requires a read-only PostgreSQL user with access to:
-- `pg_stat_statements`
-- `pg_stat_user_tables`
-- `pg_stat_user_indexes`
-- `pg_index`
+The agent requires a read-only PostgreSQL user with **SELECT** on **`pg_stat_statements`** (and usual connect/usage on the database).
 
 Example:
 ```sql
@@ -51,7 +49,4 @@ CREATE ROLE querywise_reader WITH LOGIN PASSWORD 'secure_password';
 GRANT CONNECT ON DATABASE your_db TO querywise_reader;
 GRANT USAGE ON SCHEMA pg_catalog TO querywise_reader;
 GRANT SELECT ON pg_stat_statements TO querywise_reader;
-GRANT SELECT ON pg_stat_user_tables TO querywise_reader;
-GRANT SELECT ON pg_stat_user_indexes TO querywise_reader;
-GRANT SELECT ON pg_index TO querywise_reader;
 ```
