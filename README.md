@@ -1,119 +1,78 @@
 # QueryWise
 
-A lightweight, secure agent-based system designed to analyze and optimize cloud database costs using **PostgreSQL `pg_stat_statements`** metrics (hashed query text only—no raw SQL stored centrally).
+Pure Go CLI binary that connects to PostgreSQL, reads **`pg_stat_statements`**, hashes query text locally with SHA‑256 (raw SQL is never stored in memory beyond the catalog read or sent to any API), ranks patterns with a configurable cost heuristic, optionally asks the Claude API for anonymized tuning hints, and prints or writes a report.
 
-## Overview
+Requires the [**pg_stat_statements**](https://www.postgresql.org/docs/current/pgstatstatements.html) extension on the database you profile.
 
-QueryWise helps developers and DevOps teams identify:
+---
 
-- **Expensive queries** — ranked by a simple cost model (CPU time + block I/O + per-call overhead)
-- **Response-time trends** — aggregated from ingested snapshots
-
-The agent does **not** collect index-usage reports or automated rewrite recommendations today; those would be future work.
-
-## Architecture
-
-| Component | Tech | Role |
-|-----------|------|------|
-| **Agent** | Go | Runs near the DB; collects from `pg_stat_statements`, hashes query text, sends metrics to backend |
-| **Backend** | Node.js + Express | Ingest API, cost estimates, reports API |
-| **Frontend** | Next.js | Dashboard: instances, API keys, top queries, summary stats |
-
-## Quick start (Docker)
+## Commands
 
 ```bash
-# Start backend + frontend + Postgres
-docker compose up -d db backend frontend
+# Analyze and print colored table report
+QUERYWISE_DSN="postgres://user:pass@localhost:5432/mydb" ./bin/querywise analyze
 
-# Migrations run on backend start. Create an instance and get API key:
-docker compose exec backend node scripts/seed-instance.js my-db
-# Copy the printed api_key into agent config.
+# Analyze with explicit flags
+./bin/querywise analyze --dsn "postgres://..." --top 20
 
-# Open dashboard
-open http://localhost:3001
+# Markdown export
+./bin/querywise analyze --dsn "postgres://..." --output markdown --file report.md
+
+# JSON export
+./bin/querywise analyze --dsn "postgres://..." --output json --file report.json
+
+# LLM recommendations (sets report footer when used)
+./bin/querywise analyze --dsn "postgres://..." --recommend # needs ANTHROPIC_API_KEY
+
+# Config file overrides defaults; flags still beat env/YAML where set
+./bin/querywise analyze --config ./.querywise.yml
+
+# Render a saved JSON report to the terminal or another format
+./bin/querywise report --from report.json
+./bin/querywise report --from report.json --output markdown --file pretty.md
+
+./bin/querywise version
 ```
 
-Backend: http://localhost:3000  
-Frontend: http://localhost:3001  
+Environment variables (**`QUERYWISE_` prefix**) and `.querywise.yml` keys:
 
-With **Google auth enabled** (`ENABLE_GOOGLE_AUTH` not `false`), instances created via the CLI seed have **no owner** until you either:
+| YAML key | Env | Purpose |
+|---------|-----|---------|
+| `dsn` | `QUERYWISE_DSN` | PostgreSQL URI |
+| `top` | `QUERYWISE_TOP` | Top‑N ranked statements |
+| `min_calls` | `QUERYWISE_MIN_CALLS` | Minimum `calls` filter |
+| `anthropic_api_key` | `ANTHROPIC_API_KEY` | Claude credentials |
+| `anthropic_model` | `QUERYWISE_ANTHROPIC_MODEL` | Model id for recommendations |
 
-- Create instances from the dashboard while signed in (recommended), or  
-- Set ownership after sign-in, e.g. `UPDATE db_instances SET owner_user_id = (SELECT id FROM users WHERE email = 'you@example.com' LIMIT 1) WHERE name = 'my-db';`, or  
-- Run seed with `OWNER_USER_EMAIL=you@example.com docker compose exec -e OWNER_USER_EMAIL=... backend node scripts/seed-instance.js my-db` (user must have signed in once so the row exists).
+**Effective precedence:** explicit flags → environment → YAML (if loaded) → built‑in defaults.
 
-## Quick start (local)
+---
 
-**1. Backend**
+## Developer workflow
 
 ```bash
-cd backend
-cp .env.example .env   # set DB_* and API_SECRET
-npm install
-npm run migrate
-npm run seed my-db    # creates instance, prints API key
-npm run dev
+make build
+make test
+make lint     # golangci-lint
+make release  # snapshot via goreleaser (requires tooling)
 ```
 
-**2. Frontend**
+Build with embedded version tag:
 
 ```bash
-cd frontend
-cp .env.local.example .env.local   # NEXT_PUBLIC_API_URL=http://localhost:3000
-npm install
-npm run dev
+go build -ldflags="-X querywise/cmd.Version=v0.1.0" -o bin/querywise .
 ```
 
-Open http://localhost:3001
+---
 
-**3. Agent** (on a host that can reach your Postgres and the backend)
+## Security posture
 
-```bash
-cd agent
-cp ../config/agent.example.yml config/agent.yml
-# Edit config/agent.yml: database.*, backend.url, backend.api_key (from step 1)
-# Set agent.name to the same string as the QueryWise instance *name* so ingest labels match the instance.
-go build -o querywise-agent ./cmd/main.go
-./querywise-agent -config config/agent.yml
-```
+1. Postgres returns statement text → hasher consumes it immediately; program state retains only hashes and numeric stats.
+2. Network calls (**`--recommend`**) transmit JSON containing **hash + metrics only**.
+3. Use least‑privileged DB users and TLS DSN params in production URIs.
 
-Postgres must have `pg_stat_statements` enabled and the agent DB user must have `SELECT` on it (see [agent/README.md](./agent/README.md)).
+---
 
-## Login (Google SSO)
+## License
 
-The dashboard can be protected by **Google OAuth 2**. To enable:
-
-1. In [Google Cloud Console](https://console.cloud.google.com/apis/credentials), create an OAuth 2.0 Client ID (Web application).
-2. Add authorized redirect URI: `http://localhost:3000/api/v1/auth/google/callback` (or your backend URL + `/api/v1/auth/google/callback`).
-3. Set in backend `.env`: `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and `FRONTEND_URL` (e.g. `http://localhost:3001`).
-
-If SSO is not configured, opening `/api/v1/auth/google` in a **browser** redirects to `/login?error=sso_not_configured` instead of returning raw JSON.
-
-**Bypass auth for testing:** set `ENABLE_GOOGLE_AUTH=false` in the backend and `NEXT_PUBLIC_REQUIRE_AUTH=false` in the frontend (e.g. in `.env.local`). Then instances and reports are accessible without login. The nav shows a “Testing — auth disabled” badge.
-
-## API
-
-- `GET /api/v1/auth/google` — Redirect to Google sign-in.
-- `GET /api/v1/auth/google/callback` — OAuth callback (used by Google).
-- `GET /api/v1/auth/me` — Current user (header: `Authorization: Bearer <token>`).
-- `POST /api/v1/ingest` — Agent sends metrics (header: `X-API-Key`). The payload may include `db_id`; it should match the instance name or id (otherwise the backend logs a warning).
-- `GET /api/v1/reports/:db_id` — Report for dashboard (requires auth when enabled). Each user only sees instances they own.
-- `GET /api/v1/instances` — List instances. `POST /api/v1/instances` — Create (body: `{ "name": "my-db" }`; requires auth when enabled). Owner is set from the JWT.
-
-## Directory structure
-
-```
-QueryWise/
-├── agent/          # Go agent (config, collector, client)
-├── backend/        # Node.js API, migrations, cost engine
-├── frontend/       # Next.js dashboard
-├── config/         # agent.example.yml (if present)
-├── docker-compose.yml
-└── README.md
-```
-
-## Documentation
-
-- [Architecture](./ARCHITECTURE.md)
-- [Agent](./agent/README.md)
-- [Backend](./backend/README.md)
+Project license is determined by the repository owner unless otherwise noted.

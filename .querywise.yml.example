@@ -1,0 +1,8 @@
+dsn: "postgres://user:pass@localhost:5432/mydb"
+top: 10
+output: terminal # terminal | markdown | json
+file: "" # output file path (required for markdown/json; empty prints terminal only)
+recommend: false # enable Claude recommendations
+anthropic_api_key: "" # or set ANTHROPIC_API_KEY
+anthropic_model: "claude-sonnet-4-20250514" # optional; can set QUERYWISE_ANTHROPIC_MODEL
+min_calls: 10 # ignore queries called fewer than N times
