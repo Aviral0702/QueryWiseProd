@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -10,6 +11,11 @@ import (
 
 // Connect opens a Postgres pool using pgx and verifies connectivity with Ping.
 func Connect(ctx context.Context, dsn string) (*pgxpool.Pool, error) {
+	dsn, warning := ensureSSLMode(dsn)
+	if warning != "" {
+		fmt.Fprintln(os.Stderr, warning)
+	}
+
 	cfg, err := pgxpool.ParseConfig(dsn)
 	if err != nil {
 		return nil, fmt.Errorf("parse dsn: %w", err)
