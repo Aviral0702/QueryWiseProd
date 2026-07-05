@@ -25,8 +25,35 @@ func SumTotals(stats []db.QueryStat) Totals {
 	return t
 }
 
+// Weights controls the relative contribution of each cost share to the score.
+type Weights struct {
+	Time float64
+	IO   float64
+	Freq float64
+}
+
+// DefaultWeights is the standard weighting used when none is configured.
+var DefaultWeights = Weights{Time: 0.4, IO: 0.4, Freq: 0.2}
+
 // Score returns a 0–100 cost share for this query pattern given database-wide totals.
-func Score(q db.QueryStat, totals Totals) float64 {
+//
+// The score is a weighted blend of three shares:
+//
+//	score = (timeShare*wTime + ioShare*wIO + freqShare*wFreq) * 100
+//
+// where the weights are normalized by their sum so the result stays a
+// percentage regardless of the raw weight values. Zero or negative weight
+// sums fall back to DefaultWeights.
+func Score(q db.QueryStat, totals Totals, w Weights) float64 {
+	sum := w.Time + w.IO + w.Freq
+	if sum <= 0 {
+		w = DefaultWeights
+		sum = w.Time + w.IO + w.Freq
+	}
+	wTime := w.Time / sum
+	wIO := w.IO / sum
+	wFreq := w.Freq / sum
+
 	var timeShare, ioShare, freqShare float64
 
 	if totals.TotalExecTime > 0 {
@@ -39,7 +66,7 @@ func Score(q db.QueryStat, totals Totals) float64 {
 		freqShare = float64(q.Calls) / totals.Calls
 	}
 
-	return (timeShare*0.4 + ioShare*0.4 + freqShare*0.2) * 100
+	return (timeShare*wTime + ioShare*wIO + freqShare*wFreq) * 100
 }
 
 // Scored pairs a stat with its score (not yet ranked).
@@ -49,10 +76,10 @@ type Scored struct {
 }
 
 // RankByScore sorts by descending score and returns at most topN items.
-func RankByScore(stats []db.QueryStat, totals Totals, topN int) []Scored {
+func RankByScore(stats []db.QueryStat, totals Totals, w Weights, topN int) []Scored {
 	scored := make([]Scored, 0, len(stats))
 	for _, q := range stats {
-		scored = append(scored, Scored{Stat: q, Score: Score(q, totals)})
+		scored = append(scored, Scored{Stat: q, Score: Score(q, totals, w)})
 	}
 
 	sort.Slice(scored, func(i, j int) bool {

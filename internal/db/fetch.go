@@ -2,10 +2,12 @@ package db
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"querywise/internal/hash"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -17,6 +19,9 @@ SELECT
 	calls,
 	total_exec_time,
 	mean_exec_time,
+	stddev_exec_time,
+	min_exec_time,
+	max_exec_time,
 	"rows",
 	shared_blks_hit,
 	shared_blks_read,
@@ -29,9 +34,13 @@ ORDER BY calls DESC`
 
 // FetchStatements loads pg_stat_statements rows above minCalls into QueryStat structs.
 // Query text from the catalog is hashed and discarded immediately; it is never returned.
-func FetchStatements(ctx context.Context, pool *pgxpool.Pool, minCalls int64) ([]QueryStat, error) {
+func FetchStatements(ctx context.Context, pool *pgxpool.Pool, minCalls int64, hashKey string) ([]QueryStat, error) {
 	rows, err := pool.Query(ctx, pgStatStatementsQuery, minCalls)
 	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "42P01" {
+			return nil, fmt.Errorf("pg_stat_statements is not available: install it with 'CREATE EXTENSION pg_stat_statements;' and add it to shared_preload_libraries: %w", err)
+		}
 		return nil, fmt.Errorf("query pg_stat_statements: %w", err)
 	}
 	defer rows.Close()
@@ -48,6 +57,9 @@ func FetchStatements(ctx context.Context, pool *pgxpool.Pool, minCalls int64) ([
 			&qs.Calls,
 			&qs.TotalExecTimeMs,
 			&qs.MeanExecTimeMs,
+			&qs.StddevExecTimeMs,
+			&qs.MinExecTimeMs,
+			&qs.MaxExecTimeMs,
 			&qs.Rows,
 			&qs.SharedBlksHit,
 			&qs.SharedBlksRead,
@@ -64,7 +76,12 @@ func FetchStatements(ctx context.Context, pool *pgxpool.Pool, minCalls int64) ([
 			qs.QueryID = &v
 		}
 
-		qs.QueryHash = hash.SHA256Hex(rawQuery)
+		if rawQuery == "<insufficient privilege>" {
+			qs.InsufficientPrivilege = true
+			qs.QueryHash = "insufficient-privilege"
+		} else {
+			qs.QueryHash = hash.Fingerprint(hashKey, rawQuery)
+		}
 		rawQuery = ""
 		out = append(out, qs)
 	}

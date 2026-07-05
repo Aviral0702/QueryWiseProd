@@ -15,7 +15,7 @@ import (
 
 // WriteTerminal renders a colored table to w.
 func WriteTerminal(w io.Writer, rep types.Report) {
-	title := fmt.Sprintf("QueryWise Report — %s @ %s", rep.DatabaseName, rep.HostEndpoint)
+	title := fmt.Sprintf("QueryWise Report — %s @ %s", sanitizeTerminal(rep.DatabaseName), sanitizeTerminal(rep.HostEndpoint))
 	cyan := color.New(color.FgCyan).SprintFunc()
 	bold := color.New(color.Bold).SprintFunc()
 
@@ -24,7 +24,7 @@ func WriteTerminal(w io.Writer, rep types.Report) {
 	_, _ = fmt.Fprintf(w, "%s\n\n", cyan(fmt.Sprintf("Queries analyzed: %d | Showing top %d", rep.QueriesAnalyzed, rep.TopNShown)))
 
 	table := tablewriter.NewWriter(w)
-	table.SetHeader([]string{"RANK", "HASH", "COST%", "CALLS", "AVG TIME", "TOTAL TIME", "CACHE HIT", "RECOMMENDATION"})
+	table.SetHeader([]string{"RANK", "HASH", "COST%", "CALLS", "AVG TIME", "MAX TIME", "TOTAL TIME", "CACHE HIT", "RECOMMENDATION"})
 	table.SetAutoWrapText(false)
 	table.SetAutoFormatHeaders(true)
 	table.SetHeaderAlignment(tablewriter.ALIGN_LEFT)
@@ -43,17 +43,25 @@ func WriteTerminal(w io.Writer, rep types.Report) {
 		}
 		table.Append([]string{
 			fmt.Sprintf("%d", row.Rank),
-			shortHash(row.QueryHash),
+			sanitizeTerminal(shortHash(row.QueryHash)),
 			fmt.Sprintf("%.1f%%", row.CostScore),
 			formatInt(row.Calls),
 			formatDurationMS(row.MeanExecTimeMs),
+			formatDurationMS(row.MaxExecTimeMs),
 			formatTotalTime(row.TotalExecTimeMs),
 			fmt.Sprintf("%.1f%%", row.CacheHitRatio*100),
-			rec,
+			sanitizeTerminal(rec),
 		})
 	}
 
 	table.Render()
+
+	if len(rep.Warnings) > 0 {
+		_, _ = fmt.Fprintln(w)
+		for _, warning := range rep.Warnings {
+			_, _ = fmt.Fprintf(w, "%s\n", sanitizeTerminal(warning))
+		}
+	}
 
 	_, _ = fmt.Fprintf(w, "\nTotal estimated DB cost covered by top %d: %.1f%%\n", rep.TopNShown, rep.CostCoveragePct)
 	if !rep.LLMUsed {

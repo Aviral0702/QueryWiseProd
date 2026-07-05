@@ -38,6 +38,10 @@ func init() {
 	analyzeCmd.Flags().String("file", "", "output path for markdown or json formats")
 	analyzeCmd.Flags().Bool("recommend", false, "request LLM recommendations (requires Anthropic API key)")
 	analyzeCmd.Flags().Int64("min-calls", 10, "ignore statements below this calls threshold")
+	analyzeCmd.Flags().Float64("score-time-weight", 0.4, "cost weight: total exec time share")
+	analyzeCmd.Flags().Float64("score-io-weight", 0.4, "cost weight: shared block read share")
+	analyzeCmd.Flags().Float64("score-freq-weight", 0.2, "cost weight: call frequency share")
+	analyzeCmd.Flags().String("hash-key", "", "secret key enabling HMAC-SHA256 query fingerprints (default: plain SHA-256)")
 
 	rootCmd.AddCommand(analyzeCmd)
 }
@@ -59,14 +63,15 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 	}
 	defer pool.Close()
 
-	stats, err := db.FetchStatements(ctx, pool, cfg.MinCalls)
+	stats, err := db.FetchStatements(ctx, pool, cfg.MinCalls, cfg.HashKey)
 	if err != nil {
 		return err
 	}
 
 	dbName, host := db.DSNLabel(cfg.DSN)
 	totals := scorer.SumTotals(stats)
-	ranked := scorer.RankByScore(stats, totals, cfg.Top)
+	w := scorer.Weights{Time: cfg.ScoreTimeWeight, IO: cfg.ScoreIOWeight, Freq: cfg.ScoreFreqWeight}
+	ranked := scorer.RankByScore(stats, totals, w, cfg.Top)
 
 	rows := make([]types.ScoredQuery, 0, len(ranked))
 	for i, r := range ranked {
@@ -78,19 +83,22 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 		}
 
 		rows = append(rows, types.ScoredQuery{
-			Rank:              i + 1,
-			QueryHash:         r.Stat.QueryHash,
-			CostScore:         r.Score,
-			Calls:             r.Stat.Calls,
-			MeanExecTimeMs:    r.Stat.MeanExecTimeMs,
-			TotalExecTimeMs:   r.Stat.TotalExecTimeMs,
-			SharedBlksRead:    r.Stat.SharedBlksRead,
-			SharedBlksHit:     r.Stat.SharedBlksHit,
-			TempBlksRead:      r.Stat.TempBlksRead,
-			TempBlksWritten:   r.Stat.TempBlksWritten,
-			Rows:              r.Stat.Rows,
-			CacheHitRatio:     ratio,
-			Recommendation:    "",
+			Rank:             i + 1,
+			QueryHash:        r.Stat.QueryHash,
+			CostScore:        r.Score,
+			Calls:            r.Stat.Calls,
+			MeanExecTimeMs:   r.Stat.MeanExecTimeMs,
+			TotalExecTimeMs:  r.Stat.TotalExecTimeMs,
+			StddevExecTimeMs: r.Stat.StddevExecTimeMs,
+			MinExecTimeMs:    r.Stat.MinExecTimeMs,
+			MaxExecTimeMs:    r.Stat.MaxExecTimeMs,
+			SharedBlksRead:   r.Stat.SharedBlksRead,
+			SharedBlksHit:    r.Stat.SharedBlksHit,
+			TempBlksRead:     r.Stat.TempBlksRead,
+			TempBlksWritten:  r.Stat.TempBlksWritten,
+			Rows:             r.Stat.Rows,
+			CacheHitRatio:    ratio,
+			Recommendation:   "",
 		})
 	}
 
@@ -118,6 +126,18 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 		CostCoveragePct: scorer.CostCoverage(ranked),
 		LLMUsed:         llmUsed,
 		Rows:            rows,
+	}
+
+	insufficient := 0
+	for _, s := range stats {
+		if s.InsufficientPrivilege {
+			insufficient++
+		}
+	}
+	if insufficient > 0 {
+		warning := fmt.Sprintf("%d statement(s) returned '<insufficient privilege>' — grant pg_read_all_stats to the connecting role for complete results", insufficient)
+		rep.Warnings = append(rep.Warnings, warning)
+		fmt.Fprintln(os.Stderr, warning)
 	}
 
 	switch cfg.Output {

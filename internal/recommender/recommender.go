@@ -16,6 +16,24 @@ import (
 
 const defaultAnthropicURL = "https://api.anthropic.com/v1/messages"
 
+// maxResponseBytes caps how much of the Anthropic HTTP response we read into
+// memory, guarding against a compromised or buggy endpoint returning a huge
+// body (DoS).
+const maxResponseBytes = 5 << 20 // 5 MiB
+
+// readLimited reads at most max bytes from r. If r yields more than max bytes,
+// it returns an error instead of buffering the whole body.
+func readLimited(r io.Reader, max int64) ([]byte, error) {
+	b, err := io.ReadAll(io.LimitReader(r, max+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(b)) > max {
+		return nil, fmt.Errorf("anthropic response exceeds %d byte limit", max)
+	}
+	return b, nil
+}
+
 // BuildContexts converts ranked stats into anonymized JSON payloads (no raw SQL).
 func BuildContexts(ranked []scorer.Scored) []types.QueryContext {
 	out := make([]types.QueryContext, 0, len(ranked))
@@ -46,15 +64,15 @@ func BuildContexts(ranked []scorer.Scored) []types.QueryContext {
 
 type llmPayload struct {
 	Items []struct {
-		QueryHash       string `json:"query_hash"`
-		Recommendation  string `json:"recommendation"`
+		QueryHash      string `json:"query_hash"`
+		Recommendation string `json:"recommendation"`
 	} `json:"items"`
 }
 
 type messagesRequest struct {
-	Model     string        `json:"model"`
-	MaxTokens int           `json:"max_tokens"`
-	Messages  []msg         `json:"messages"`
+	Model     string `json:"model"`
+	MaxTokens int    `json:"max_tokens"`
+	Messages  []msg  `json:"messages"`
 }
 type msg struct {
 	Role    string `json:"role"`
@@ -115,7 +133,7 @@ Stats JSON:
 	}
 	defer resp.Body.Close()
 
-	respBody, err := io.ReadAll(resp.Body)
+	respBody, err := readLimited(resp.Body, maxResponseBytes)
 	if err != nil {
 		return nil, err
 	}
