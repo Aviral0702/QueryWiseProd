@@ -15,6 +15,11 @@ coverage/
 .env.*
 !.env.example
 
+# Local config (may contain DSN password / API key)
+.querywise.yml
+*.querywise.yml
+!.querywise.yml.example
+
 # IDE
 .vscode/
 .idea/
